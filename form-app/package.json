@@ -6,16 +6,18 @@
   "scripts": {
     "test": "node --test",
     "start": "node server.js",
-    "dev": "node --env-file=.env server.js"
+    "dev": "node --env-file=.env server.js",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.7.0"
+    "express-rate-limit": "^8.7.0",
+    "pg": "^8.23.1"
   },
   "engines": {
     "node": "24.x"

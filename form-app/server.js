@@ -2,7 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const path = require('path');
-const db = require('./db');
+const { pool, init } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -53,12 +53,6 @@ const submitLimiter = rateLimit({
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Prepared statement: ? placeholders keep user input separate from the SQL
-// (this is what prevents SQL injection)
-const insertSubmission = db.prepare(
-  'INSERT INTO submissions (name, email, message) VALUES (?, ?, ?)'
-);
-
 // Server-side validation: never trust the browser, anyone can bypass it
 function validate({ name, email, message }) {
   const errors = {};
@@ -74,28 +68,49 @@ function validate({ name, email, message }) {
   return errors;
 }
 
-app.post('/api/submit', submitLimiter, (req, res) => {
+app.post('/api/submit', submitLimiter, async (req, res) => {
   const errors = validate(req.body || {});
   if (Object.keys(errors).length > 0) {
     return res.status(400).json({ ok: false, errors });
   }
 
   const { name, email, message } = req.body;
-  insertSubmission.run(name.trim(), email.trim(), message.trim());
+  // $1, $2, $3 placeholders keep user input separate from the SQL (prevents SQL injection).
+  // await: the query takes time, so we wait for the database before answering.
+  await pool.query('INSERT INTO submissions (name, email, message) VALUES ($1, $2, $3)', [
+    name.trim(),
+    email.trim(),
+    message.trim(),
+  ]);
   res.status(201).json({ ok: true });
 });
-
-const selectAll = db.prepare('SELECT * FROM submissions ORDER BY id DESC');
 
 // Admin page lives in /private (not /public), so it is only served through this protected route
 app.get('/admin', requireAdmin, (req, res) => {
   res.sendFile(path.join(__dirname, 'private', 'admin.html'));
 });
 
-app.get('/api/submissions', requireAdmin, (req, res) => {
-  res.json(selectAll.all());
+app.get('/api/submissions', requireAdmin, async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM submissions ORDER BY id DESC');
+  res.json(rows);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+// Express 5 sends any error thrown in an async route here. We log the details
+// on the server but never show them to the visitor.
+app.use((err, req, res, next) => {
+  console.error(err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ ok: false, errors: { form: 'Something went wrong, please try again' } });
 });
+
+// Make sure the table exists before accepting requests
+init()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running at http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('Could not connect to the database:', err.message);
+    process.exit(1);
+  });

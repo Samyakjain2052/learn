@@ -19,6 +19,20 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A throwaway Postgres for the tests; same host/port/db the tests default to
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: form_app_test
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: form-app

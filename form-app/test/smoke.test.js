@@ -1,19 +1,22 @@
-// Smoke test: starts the real server on a throwaway port + temp database, then calls the API.
+// Smoke test: starts the real server on a throwaway port against a separate TEST database,
+// then calls the API. Needs Postgres running: npm run db:up (CI starts its own).
 // Run with: npm test
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const { Pool } = require('pg');
 
+// Always the test database, never the dev one, even if DATABASE_URL is set in the shell
+const TEST_DB_URL =
+  process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@localhost:5433/form_app_test';
 const PORT = 3999;
 const BASE = `http://localhost:${PORT}`;
 const AUTH = 'Basic ' + Buffer.from('admin:test-password').toString('base64');
 const WRONG_AUTH = 'Basic ' + Buffer.from('admin:wrong').toString('base64');
 
 let server;
-let tmpDir;
+let pool;
 
 const post = (body) =>
   fetch(`${BASE}/api/submit`, {
@@ -23,23 +26,25 @@ const post = (body) =>
   });
 
 before(async () => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'form-app-test-'));
+  pool = new Pool({ connectionString: TEST_DB_URL });
   server = spawn('node', ['server.js'], {
     cwd: path.join(__dirname, '..'),
     env: {
       ...process.env,
       PORT: String(PORT),
-      DB_PATH: path.join(tmpDir, 'test.db'),
+      DATABASE_URL: TEST_DB_URL,
+      DATABASE_SSL: 'false',
       ADMIN_USER: 'admin',
       ADMIN_PASSWORD: 'test-password',
     },
     stdio: 'ignore',
   });
 
-  // Wait until the server answers (max ~10s)
+  // Wait until the server answers (max ~10s); it creates the table on startup
   for (let i = 0; i < 50; i++) {
     try {
       await fetch(BASE);
+      await pool.query('TRUNCATE submissions RESTART IDENTITY'); // start every run from empty
       return;
     } catch {
       await new Promise((r) => setTimeout(r, 200));
@@ -48,9 +53,9 @@ before(async () => {
   throw new Error('Server did not start');
 });
 
-after(() => {
+after(async () => {
   server.kill();
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  await pool.end();
 });
 
 test('form page is public', async () => {

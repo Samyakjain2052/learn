@@ -1,23 +1,29 @@
-const Database = require('better-sqlite3');
-const fs = require('fs');
-const path = require('path');
+const { Pool } = require('pg');
 
-// Locally: ./data.db. On Azure we set DB_PATH=/home/data/data.db because only /home survives restarts
-const dbPath = process.env.DB_PATH || path.join(__dirname, 'data.db');
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+if (!process.env.DATABASE_URL) {
+  console.error('DATABASE_URL is missing. Locally: npm run db:up, then npm run dev (reads .env)');
+  process.exit(1);
+}
 
-// The file is created automatically if it doesn't exist
-const db = new Database(dbPath);
+// A pool keeps a few connections open and reuses them, instead of reconnecting on every request.
+// Azure PostgreSQL requires SSL; locally (Docker) we don't use it.
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: true } : false,
+  max: 5,
+});
 
 // Create the table on first run; IF NOT EXISTS makes this safe to run every time
-db.exec(`
-  CREATE TABLE IF NOT EXISTS submissions (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL,
-    email      TEXT NOT NULL,
-    message    TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-  )
-`);
+async function init() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS submissions (
+      id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      name       TEXT NOT NULL,
+      email      TEXT NOT NULL,
+      message    TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+}
 
-module.exports = db;
+module.exports = { pool, init };
