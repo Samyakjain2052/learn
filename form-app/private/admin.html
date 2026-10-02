@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin - Submissions</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .card.wide { max-width: 800px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+    td.msg { white-space: pre-wrap; word-break: break-word; }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <main class="card wide">
+    <h1>Submissions <span id="count" class="muted"></span></h1>
+    <p id="status" role="status"></p>
+    <table>
+      <thead>
+        <tr><th>#</th><th>Name</th><th>Email</th><th>Message</th><th>Received</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+
+  <script>
+    const rowsEl = document.getElementById('rows');
+    const statusEl = document.getElementById('status');
+
+    // SQLite stores UTC; show it in the viewer's local time
+    function toLocal(utc) {
+      return new Date(utc.replace(' ', 'T') + 'Z').toLocaleString();
+    }
+
+    async function load() {
+      const res = await fetch('/api/submissions');
+      if (!res.ok) {
+        statusEl.textContent = 'Could not load submissions (' + res.status + ')';
+        return;
+      }
+      const data = await res.json();
+      document.getElementById('count').textContent = '(' + data.length + ')';
+      if (data.length === 0) statusEl.textContent = 'No submissions yet.';
+
+      for (const row of data) {
+        const tr = document.createElement('tr');
+        const cells = [row.id, row.name, row.email, row.message, toLocal(row.created_at)];
+        cells.forEach((value, i) => {
+          const td = document.createElement('td');
+          // textContent treats the value as plain text, so <script> or <img onerror> in a
+          // message can never run. Using innerHTML here would be an XSS hole.
+          td.textContent = value;
+          if (i === 3) td.className = 'msg';
+          tr.appendChild(td);
+        });
+        rowsEl.appendChild(tr);
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
