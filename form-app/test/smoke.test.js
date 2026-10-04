@@ -34,6 +34,7 @@ before(async () => {
       PORT: String(PORT),
       DATABASE_URL: TEST_DB_URL,
       DATABASE_SSL: 'false',
+      RATE_LIMIT_MAX: '1000',
       ADMIN_USER: 'admin',
       ADMIN_PASSWORD: 'test-password',
     },
@@ -87,6 +88,37 @@ test('SQL injection text is stored as plain text, table survives', async () => {
   const list = await fetch(`${BASE}/api/submissions`, { headers: { Authorization: AUTH } });
   const rows = await list.json();
   assert.ok(rows.some((r) => r.name === evil));
+});
+
+test('same email again is rejected with 409 and an email error', async () => {
+  const first = await post({ name: 'Dup One', email: 'dup@example.com', message: 'first' });
+  assert.strictEqual(first.status, 201);
+
+  const second = await post({ name: 'Dup Two', email: 'dup@example.com', message: 'second' });
+  assert.strictEqual(second.status, 409);
+  const body = await second.json();
+  assert.strictEqual(body.ok, false);
+  assert.ok(body.errors.email);
+});
+
+test('duplicate check ignores letter case and surrounding spaces', async () => {
+  await post({ name: 'Case One', email: 'case@example.com', message: 'first' });
+  const res = await post({ name: 'Case Two', email: '  CaSe@Example.COM ', message: 'second' });
+  assert.strictEqual(res.status, 409);
+});
+
+test('rejected duplicate is not saved (only the first row exists)', async () => {
+  const list = await fetch(`${BASE}/api/submissions`, { headers: { Authorization: AUTH } });
+  const rows = await list.json();
+  const dups = rows.filter((r) => r.email.toLowerCase().trim() === 'dup@example.com');
+  assert.strictEqual(dups.length, 1);
+  assert.strictEqual(dups[0].message, 'first');
+});
+
+test('two simultaneous requests with the same email: exactly one wins (race condition)', async () => {
+  const payload = { name: 'Race', email: 'race@example.com', message: 'go' };
+  const [a, b] = await Promise.all([post(payload), post(payload)]);
+  assert.deepStrictEqual([a.status, b.status].sort(), [201, 409]);
 });
 
 test('admin routes require the right login (401 otherwise)', async () => {

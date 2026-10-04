@@ -43,7 +43,7 @@ app.set('trust proxy', 1);
 // Max 5 form submissions per IP per 15 minutes, to stop spam
 const submitLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 5,
+  limit: Number(process.env.RATE_LIMIT_MAX) || 5, // tests raise this; production keeps 5
   standardHeaders: true,
   legacyHeaders: false,
   message: { ok: false, errors: { form: 'Too many submissions, try again later' } },
@@ -77,11 +77,22 @@ app.post('/api/submit', submitLimiter, async (req, res) => {
   const { name, email, message } = req.body;
   // $1, $2, $3 placeholders keep user input separate from the SQL (prevents SQL injection).
   // await: the query takes time, so we wait for the database before answering.
-  await pool.query('INSERT INTO submissions (name, email, message) VALUES ($1, $2, $3)', [
-    name.trim(),
-    email.trim(),
-    message.trim(),
-  ]);
+  // ON CONFLICT ... DO NOTHING: if the email already exists (unique index on lower(email)),
+  // Postgres skips the insert instead of throwing, and RETURNING gives back 0 rows.
+  const result = await pool.query(
+    `INSERT INTO submissions (name, email, message) VALUES ($1, $2, $3)
+     ON CONFLICT (lower(email)) DO NOTHING
+     RETURNING id`,
+    [name.trim(), email.trim(), message.trim()]
+  );
+
+  // 0 rows back = nothing was inserted = duplicate. 409 Conflict: request is valid
+  // but clashes with existing data.
+  if (result.rowCount === 0) {
+    return res
+      .status(409)
+      .json({ ok: false, errors: { email: 'This email has already been submitted' } });
+  }
   res.status(201).json({ ok: true });
 });
 
