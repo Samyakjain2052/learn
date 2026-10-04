@@ -24,6 +24,13 @@ async function init() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+
+  // One submission per email, ignoring upper/lower case (Test@x.com == test@x.com).
+  // The database itself enforces this, so two simultaneous requests can't both get in.
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS submissions_email_unique
+    ON submissions (lower(email))
+  `);
 }
 
 module.exports = { pool, init };
